@@ -81,13 +81,17 @@ make build-all      # all targets (linux/darwin/windows × amd64/arm64)
 ### Bookmarks
 
 ```bash
-raindrop bookmarks list                           # all raindrops
+raindrop bookmarks list                           # all raindrops (auto-paginates)
 raindrop bookmarks list -c 12345                  # scoped to a collection
 raindrop bookmarks list -s "devops kubernetes"    # Raindrop search syntax
+raindrop bookmarks list --include-collection      # add COLLECTION column
+raindrop bookmarks list --page 0 --per-page 50    # explicit paging (disables auto)
 
 raindrop bookmarks untagged                       # items with empty tags[]
-raindrop bookmarks untagged --for-ai              # TSV: id, domain, title, link
+raindrop bookmarks untagged --for-ai              # TSV: id, collection_id, domain, title, link
 ```
+
+`list` auto-paginates through every page by default. Pass `--page` or `--per-page` to page explicitly.
 
 Collection IDs: `0` = all, `-1` = unsorted, `-99` = trash.
 
@@ -110,8 +114,9 @@ raindrop bookmarks tag --from-file plan.tsv --set
 
 ```bash
 raindrop collections list                         # flat table
-raindrop collections list --tree                  # indented tree
+raindrop collections list --tree                  # indented tree (roots by sort, children by count desc)
 raindrop collections list --for-ai                # TSV: id, parent_id, count, title
+raindrop collections list --tree --for-ai         # TSV with depth column: depth, id, parent_id, count, title
 
 raindrop collections create --title "🧪 Lab"                  # at root
 raindrop collections create --title "sub" --parent 12345      # nested
@@ -159,7 +164,7 @@ raindrop tags list --for-ai | head -20
 ## Tips and Notes
 
 - All mutating commands accept `--dry-run` to preview changes before committing — use it on `merge`, `rename`, `delete`, `dedup`.
-- `--for-ai` produces plain text / markdown tables — ideal for piping into tools or feeding directly to an agent.
+- `--for-ai` produces plain text / markdown tables — ideal for piping into tools or feeding directly to an agent. Summary / info lines go to stderr in this mode, so `wc -l`, `jq`, `awk` on stdout see only payload rows.
 - `--debug` prints structured request/response logs including rate-limit headers (`X-RateLimit-Remaining`, `X-RateLimit-Reset`).
 - The client self-throttles to 600ms between calls (120 req/min). Long-running bulk jobs are safe.
 - Bulk endpoints handle up to 100 items per call; the CLI paginates automatically.

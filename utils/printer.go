@@ -20,7 +20,9 @@ func PrintInfo(msg string) {
 	case GlobalDebugFlag:
 		log.Info().Str("package", "utils").Msg(msg)
 	case GlobalForAIFlag:
-		fmt.Println("[INFO] " + msg)
+		// Route info to stderr in agent mode so stdout stays pure payload
+		// (wc -l, jq, awk, etc. see only data rows).
+		fmt.Fprintln(os.Stderr, "[INFO] "+msg)
 	default:
 		fmt.Println(infoStyle.Render("→ " + msg))
 	}

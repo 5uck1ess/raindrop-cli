@@ -19,7 +19,7 @@ var untaggedCmd = &cobra.Command{
 		if err != nil {
 			u.PrintFatal("auth", err)
 		}
-		all, err := raindrops.ListAll(c, "")
+		all, err := raindrops.ListAll(c, 0, "")
 		if err != nil {
 			u.PrintFatal("list bookmarks", err)
 		}
@@ -35,9 +35,9 @@ var untaggedCmd = &cobra.Command{
 		}
 
 		if u.GlobalForAIFlag {
-			fmt.Println("id\tdomain\ttitle\tlink")
+			fmt.Println("id\tcollection_id\tdomain\ttitle\tlink")
 			for _, r := range untagged {
-				fmt.Printf("%d\t%s\t%s\t%s\n", r.ID, r.Domain, sanitize(r.Title), r.Link)
+				fmt.Printf("%d\t%d\t%s\t%s\t%s\n", r.ID, r.CollectionID(), r.Domain, sanitize(r.Title), r.Link)
 			}
 			return
 		}
@@ -46,11 +46,12 @@ var untaggedCmd = &cobra.Command{
 		for _, r := range untagged {
 			rows = append(rows, []string{
 				fmt.Sprintf("%d", r.ID),
+				fmt.Sprintf("%d", r.CollectionID()),
 				r.Domain,
 				truncate(r.Title, 60),
 			})
 		}
-		u.PrintTable([]string{"ID", "DOMAIN", "TITLE"}, rows)
+		u.PrintTable([]string{"ID", "COLLECTION", "DOMAIN", "TITLE"}, rows)
 		u.PrintInfo(fmt.Sprintf("%d untagged of %d total", len(untagged), len(all)))
 	},
 }

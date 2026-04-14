@@ -7,13 +7,26 @@ import (
 	"github.com/5uck1ess/raindrop-cli/internal/client"
 )
 
+type collectionRef struct {
+	ID int `json:"$id"`
+}
+
 type Raindrop struct {
-	ID      int      `json:"_id"`
-	Title   string   `json:"title"`
-	Link    string   `json:"link"`
-	Domain  string   `json:"domain"`
-	Tags    []string `json:"tags"`
-	Created string   `json:"created"`
+	ID         int            `json:"_id"`
+	Title      string         `json:"title"`
+	Link       string         `json:"link"`
+	Domain     string         `json:"domain"`
+	Tags       []string       `json:"tags"`
+	Created    string         `json:"created"`
+	Collection *collectionRef `json:"collection,omitempty"`
+}
+
+// CollectionID returns the raindrop's parent collection ID, or 0 if none.
+func (r Raindrop) CollectionID() int {
+	if r.Collection == nil {
+		return 0
+	}
+	return r.Collection.ID
 }
 
 type listResponse struct {
@@ -47,12 +60,12 @@ func SetTags(c *client.Client, id int, tags []string) error {
 	return c.Do("PUT", path, body, nil)
 }
 
-// ListAll pages through /raindrops/0 and returns every raindrop.
-func ListAll(c *client.Client, search string) ([]Raindrop, error) {
+// ListAll pages through /raindrops/{collectionID} and returns every raindrop.
+func ListAll(c *client.Client, collectionID int, search string) ([]Raindrop, error) {
 	const perPage = 50
 	var all []Raindrop
 	for page := 0; ; page++ {
-		items, total, err := List(c, 0, search, page, perPage)
+		items, total, err := List(c, collectionID, search, page, perPage)
 		if err != nil {
 			return nil, fmt.Errorf("page %d: %w", page, err)
 		}

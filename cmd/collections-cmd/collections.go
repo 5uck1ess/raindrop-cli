@@ -38,16 +38,16 @@ var listCmd = &cobra.Command{
 			return
 		}
 
+		if listFlags.tree {
+			renderTree(cols, u.GlobalForAIFlag)
+			return
+		}
+
 		if u.GlobalForAIFlag {
 			fmt.Println("id\tparent_id\tcount\ttitle")
 			for _, col := range cols {
 				fmt.Printf("%d\t%d\t%d\t%s\n", col.ID, col.ParentID, col.Count, col.Title)
 			}
-			return
-		}
-
-		if listFlags.tree {
-			printTree(cols)
 			return
 		}
 
@@ -64,18 +64,55 @@ var listCmd = &cobra.Command{
 	},
 }
 
-func printTree(cols []collections.Collection) {
-	byParent := map[int][]collections.Collection{}
+// renderTree prints collections as an indented hierarchy. Roots sort by the
+// Raindrop `sort` field descending; children sort by count descending.
+// Collections whose parent_id points to a missing collection surface at the
+// root tagged "[orphan]".
+func renderTree(cols []collections.Collection, forAI bool) {
+	exists := make(map[int]bool, len(cols))
 	for _, col := range cols {
-		byParent[col.ParentID] = append(byParent[col.ParentID], col)
+		exists[col.ID] = true
 	}
-	for _, kids := range byParent {
-		sort.Slice(kids, func(i, j int) bool { return kids[i].Title < kids[j].Title })
+
+	byParent := map[int][]collections.Collection{}
+	orphan := map[int]bool{}
+	for _, col := range cols {
+		parent := col.ParentID
+		if parent != 0 && !exists[parent] {
+			orphan[col.ID] = true
+			parent = 0
+		}
+		byParent[parent] = append(byParent[parent], col)
 	}
-	var walk func(parentID, depth int)
-	walk = func(parentID, depth int) {
-		for _, col := range byParent[parentID] {
-			fmt.Printf("%s%s (id=%d, count=%d)\n", strings.Repeat("  ", depth), col.Title, col.ID, col.Count)
+
+	for pid, kids := range byParent {
+		kids := kids
+		if pid == 0 {
+			sort.SliceStable(kids, func(i, j int) bool { return kids[i].Sort > kids[j].Sort })
+		} else {
+			sort.SliceStable(kids, func(i, j int) bool { return kids[i].Count > kids[j].Count })
+		}
+		byParent[pid] = kids
+	}
+
+	if forAI {
+		fmt.Println("depth\tid\tparent_id\tcount\ttitle")
+	} else {
+		fmt.Printf("%-11s %5s   %s\n", "id", "count", "title")
+	}
+
+	var walk func(pid, depth int)
+	walk = func(pid, depth int) {
+		for _, col := range byParent[pid] {
+			title := col.Title
+			if orphan[col.ID] {
+				title += " [orphan]"
+			}
+			if forAI {
+				fmt.Printf("%d\t%d\t%d\t%d\t%s\n", depth, col.ID, col.ParentID, col.Count, title)
+			} else {
+				fmt.Printf("%-11d %5d   %s%s\n", col.ID, col.Count, strings.Repeat("  ", depth), title)
+			}
 			walk(col.ID, depth+1)
 		}
 	}

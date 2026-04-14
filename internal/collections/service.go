@@ -16,6 +16,7 @@ type Collection struct {
 	Count    int        `json:"count"`
 	Color    string     `json:"color,omitempty"`
 	View     string     `json:"view,omitempty"`
+	Sort     int        `json:"sort"`
 	Parent   *parentRef `json:"parent,omitempty"`
 	ParentID int        `json:"-"`
 }
@@ -40,15 +41,24 @@ func ListAll(c *client.Client) ([]Collection, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list children: %w", err)
 	}
+	seen := make(map[int]bool, len(roots)+len(children))
 	out := make([]Collection, 0, len(roots)+len(children))
 	for _, col := range roots {
 		col.ParentID = 0
+		if seen[col.ID] {
+			continue
+		}
+		seen[col.ID] = true
 		out = append(out, col)
 	}
 	for _, col := range children {
 		if col.Parent != nil {
 			col.ParentID = col.Parent.ID
 		}
+		if seen[col.ID] {
+			continue
+		}
+		seen[col.ID] = true
 		out = append(out, col)
 	}
 	return out, nil
