@@ -184,7 +184,7 @@ GitHub Actions builds a matrix of binaries for `linux/darwin/windows × amd64/ar
 
 ## Credits
 
-Design patterns, repo layout, and CLI ergonomics borrow heavily from [tanq16](https://github.com/tanq16)'s Go CLI projects — in particular the flag/output conventions (`--for-ai`, `--dry-run`, markdown-table output for agents) and the thin service/client/cmd separation. Thanks for the template.
+Design patterns, repo layout, and CLI ergonomics are borrowed heavily from [tanq16](https://github.com/tanq16)'s Go CLI projects — in particular the flag/output conventions (`--for-ai`, `--dry-run`, markdown-table output for agents) and the thin service/client/cmd separation.
 
 ## License
 
