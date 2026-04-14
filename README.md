@@ -29,14 +29,23 @@ CLI for [Raindrop.io](https://raindrop.io) bookmark management. Thin wrapper ove
 
 ### Binary
 
-Download from [releases](https://github.com/5uck1ess/raindrop-cli/releases):
+Download from [releases](https://github.com/5uck1ess/raindrop-cli/releases).
+
+**Linux / macOS:**
 
 ```bash
-# Linux/macOS
 ARCH=$(uname -m); [ "$ARCH" = "x86_64" ] && ARCH=amd64; [ "$ARCH" = "aarch64" ] && ARCH=arm64
 curl -sL https://github.com/5uck1ess/raindrop-cli/releases/latest/download/raindrop-$(uname -s | tr '[:upper:]' '[:lower:]')-$ARCH -o raindrop
 chmod +x raindrop
 sudo mv raindrop /usr/local/bin/
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "amd64" }
+Invoke-WebRequest -Uri "https://github.com/5uck1ess/raindrop-cli/releases/latest/download/raindrop-windows-$arch.exe" -OutFile "$env:USERPROFILE\bin\raindrop.exe"
+# Ensure $env:USERPROFILE\bin is on your PATH
 ```
 
 ### Build from Source
@@ -45,7 +54,7 @@ sudo mv raindrop /usr/local/bin/
 git clone https://github.com/5uck1ess/raindrop-cli
 cd raindrop-cli
 make build          # current platform
-make build-all      # all supported targets (linux/darwin × amd64/arm64)
+make build-all      # all targets (linux/darwin/windows × amd64/arm64)
 ```
 
 ## Usage
@@ -122,7 +131,7 @@ Releases are cut automatically on every push to `main`. Version bumping follows 
 | `[minor-release]` | `vx.Y.0` | New commands / features |
 | _(nothing)_ | `vx.y.Z` | Patch (default) |
 
-GitHub Actions builds a matrix of binaries for `linux/darwin × amd64/arm64`, uploads them as release assets, and publishes the GitHub Release.
+GitHub Actions builds a matrix of binaries for `linux/darwin/windows × amd64/arm64`, uploads them as release assets, and publishes the GitHub Release.
 
 ## License
 

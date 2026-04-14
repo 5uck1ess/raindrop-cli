@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [linux, darwin]
+        os: [linux, darwin, windows]
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -60,15 +60,22 @@ jobs:
           go-version: '1.25'
 
       - name: Build Binary
-        run: make build-for GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} VERSION=${{ needs.create-release.outputs.version }}
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: make build-for GOOS="$GOOS" GOARCH="$GOARCH" VERSION="$VERSION"
 
       - name: Upload Release Asset
-        run: |
-          gh release upload "${{ needs.create-release.outputs.version }}" \
-            "raindrop-${{ matrix.os }}-${{ matrix.arch }}" \
-            --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          ASSET="raindrop-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then ASSET="${ASSET}.exe"; fi
+          gh release upload "$VERSION" "$ASSET" --clobber
 
   # ===========================================================================
   # Step 3: Publish release
