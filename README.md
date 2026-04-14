@@ -3,7 +3,7 @@
   <h1>raindrop-cli</h1>
 
   <a href="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml"><img alt="Build Workflow" src="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml/badge.svg"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/5uck1ess/raindrop-cli"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/5uck1ess/raindrop-cli"></a><br><br>
-  <a href="#capabilities">Capabilities</a> &bull; <a href="#installation">Installation</a> &bull; <a href="#usage">Usage</a> &bull; <a href="#tips-and-notes">Tips & Notes</a>
+  <a href="#capabilities">Capabilities</a> &bull; <a href="#installation">Installation</a> &bull; <a href="#usage">Usage</a> &bull; <a href="#tips-and-notes">Tips & Notes</a> &bull; <a href="#release">Release</a> &bull; <a href="#license">License</a>
 </div>
 
 ---
@@ -107,5 +107,20 @@ raindrop tags list --for-ai | head -20
 - `--debug` prints structured request/response logs including rate-limit headers (`X-RateLimit-Remaining`, `X-RateLimit-Reset`).
 - The client self-throttles to 600ms between calls (120 req/min). Long-running bulk jobs are safe.
 - Bulk endpoints handle up to 100 items per call; the CLI paginates automatically.
-- Commit to `main` with `[minor-release]` or `[major-release]` in the message to bump; otherwise patch bumps automatically. GitHub Actions builds binaries for linux/darwin × amd64/arm64 and publishes the release.
 - For interactive / conversational bookmark queries, pair this with the [official Raindrop MCP server](https://developer.raindrop.io/mcp/mcp) — this CLI is the heavy-lifter for deterministic bulk jobs.
+
+## Release
+
+Releases are cut automatically on every push to `main`. Version bumping follows the commit message:
+
+| Commit message contains | Bump | Example |
+|--------------------------|------|---------|
+| `[major-release]` | `vX.0.0` | Breaking changes |
+| `[minor-release]` | `vx.Y.0` | New commands / features |
+| _(nothing)_ | `vx.y.Z` | Patch (default) |
+
+GitHub Actions builds a matrix of binaries for `linux/darwin × amd64/arm64`, uploads them as release assets, and publishes the GitHub Release.
+
+## License
+
+[MIT](LICENSE) © 5uck1ess
