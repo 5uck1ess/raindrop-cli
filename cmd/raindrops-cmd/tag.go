@@ -25,15 +25,17 @@ const (
 const bulkChunkSize = 100
 
 var tagFlags struct {
-	id       int
-	add      []string
-	remove   []string
-	set      []string
-	fromFile string
-	modeStr  string
-	noBulk   bool
-	progress bool
-	dryRun   bool
+	id                 int
+	add                []string
+	remove             []string
+	set                []string
+	fromFile           string
+	fromCollectionMap  string
+	untaggedOnly       bool
+	modeStr            string
+	noBulk             bool
+	progress           bool
+	dryRun             bool
 }
 
 var tagCmd = &cobra.Command{
@@ -51,6 +53,10 @@ PUT /raindrops/{cid} endpoint (up to 100 ids per call, grouped by collection
 and tag-set) — pass --no-bulk to force per-item writes. --mode remove always
 takes the per-item path because the bulk endpoint cannot remove specific tags.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if tagFlags.fromCollectionMap != "" {
+			runFromCollectionMap()
+			return
+		}
 		if tagFlags.fromFile != "" {
 			m, err := batchMode()
 			if err != nil {
@@ -221,10 +227,25 @@ func runBatch(m mode) {
 		return
 	}
 
-	done := 0
+	// Deterministic bucket order so --progress ticks match user expectations.
+	bucketKeys := make([]bucketKey, 0, len(buckets))
+	for k := range buckets {
+		bucketKeys = append(bucketKeys, k)
+	}
+	sort.Slice(bucketKeys, func(i, j int) bool {
+		if bucketKeys[i].cid != bucketKeys[j].cid {
+			return bucketKeys[i].cid < bucketKeys[j].cid
+		}
+		return bucketKeys[i].tags < bucketKeys[j].tags
+	})
+
+	totalBuckets := len(buckets)
+	bucketIdx := 0
 	ok := 0
 	fail := 0
-	for _, b := range buckets {
+	for _, key := range bucketKeys {
+		b := buckets[key]
+		bucketIdx++
 		for chunkStart := 0; chunkStart < len(b.ids); chunkStart += bulkChunkSize {
 			end := chunkStart + bulkChunkSize
 			if end > len(b.ids) {
@@ -237,16 +258,13 @@ func runBatch(m mode) {
 			} else {
 				ok += len(chunk)
 			}
-			done += len(chunk)
 			if tagFlags.progress {
-				fmt.Fprintf(os.Stderr, "\r[%d/%d] tagged", done, total)
+				fmt.Fprintf(os.Stderr, "[bucket %d/%d] cid=%d items=%d tags=%v\n",
+					bucketIdx, totalBuckets, b.cid, len(chunk), b.tags)
 			}
 		}
 	}
-	if tagFlags.progress {
-		fmt.Fprintln(os.Stderr)
-	}
-	u.PrintSuccess(fmt.Sprintf("bulk %s: %d applied, %d failed, %d bucket(s)", modeLabel(m), ok, fail, len(buckets)))
+	u.PrintSuccess(fmt.Sprintf("bulk %s: %d applied, %d failed across %d bucket(s)", modeLabel(m), ok, fail, totalBuckets))
 }
 
 // applyBulk issues 1 or 2 PUT /raindrops/{cid} calls covering the chunk.
@@ -266,6 +284,122 @@ func applyBulk(c *client.Client, cid int, ids []int, tags []string, m mode) erro
 		return raindrops.UpdateMany(c, cid, ids, map[string]any{"tags": tags})
 	}
 	return fmt.Errorf("bulk does not support mode %s", modeLabel(m))
+}
+
+// runFromCollectionMap applies tags based on collection membership. TSV
+// rows are <collection_id>\t<tag1,tag2,...>. For each row, every bookmark
+// in that collection (optionally filtered to untagged) gets the tags
+// appended in a single bulk PUT per 100-id chunk.
+func runFromCollectionMap() {
+	entries, err := parseCollectionMapTSV(tagFlags.fromCollectionMap)
+	if err != nil {
+		u.PrintFatal("parse collection-map", err)
+	}
+	if len(entries) == 0 {
+		u.PrintInfo("no entries")
+		return
+	}
+
+	c, err := client.New()
+	if err != nil {
+		u.PrintFatal("auth", err)
+	}
+
+	type plan struct {
+		cid  int
+		tags []string
+		ids  []int
+	}
+	var plans []plan
+	totalIDs := 0
+	for _, e := range entries {
+		all, err := raindrops.ListAll(c, e.cid, "")
+		if err != nil {
+			u.PrintWarn(fmt.Sprintf("cid=%d list", e.cid), err)
+			continue
+		}
+		var ids []int
+		for _, r := range all {
+			if tagFlags.untaggedOnly && len(r.Tags) > 0 {
+				continue
+			}
+			ids = append(ids, r.ID)
+		}
+		if len(ids) == 0 {
+			u.PrintInfo(fmt.Sprintf("cid=%d: no matching bookmarks", e.cid))
+			continue
+		}
+		plans = append(plans, plan{cid: e.cid, tags: e.tags, ids: ids})
+		totalIDs += len(ids)
+	}
+
+	if tagFlags.dryRun {
+		for _, p := range plans {
+			u.PrintInfo(fmt.Sprintf("[dry-run] cid=%d → tags=%v on %d bookmark(s)", p.cid, p.tags, len(p.ids)))
+		}
+		u.PrintInfo(fmt.Sprintf("[dry-run] %d collection(s), %d bookmark(s) total", len(plans), totalIDs))
+		return
+	}
+
+	ok := 0
+	fail := 0
+	for i, p := range plans {
+		for chunkStart := 0; chunkStart < len(p.ids); chunkStart += bulkChunkSize {
+			end := chunkStart + bulkChunkSize
+			if end > len(p.ids) {
+				end = len(p.ids)
+			}
+			chunk := p.ids[chunkStart:end]
+			if err := raindrops.UpdateMany(c, p.cid, chunk, map[string]any{"tags": p.tags}); err != nil {
+				u.PrintWarn(fmt.Sprintf("cid=%d chunk %d-%d", p.cid, chunkStart, end), err)
+				fail += len(chunk)
+			} else {
+				ok += len(chunk)
+			}
+			if tagFlags.progress {
+				fmt.Fprintf(os.Stderr, "[collection %d/%d] cid=%d items=%d tags=%v\n",
+					i+1, len(plans), p.cid, len(chunk), p.tags)
+			}
+		}
+	}
+	u.PrintSuccess(fmt.Sprintf("collection-map: %d applied, %d failed across %d collection(s)", ok, fail, len(plans)))
+}
+
+type cmapEntry struct {
+	cid  int
+	tags []string
+}
+
+func parseCollectionMapTSV(path string) ([]cmapEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	var out []cmapEntry
+	sc := bufio.NewScanner(f)
+	line := 0
+	for sc.Scan() {
+		line++
+		raw := strings.TrimRight(sc.Text(), "\r\n")
+		if strings.TrimSpace(raw) == "" || strings.HasPrefix(strings.TrimSpace(raw), "#") {
+			continue
+		}
+		parts := strings.SplitN(raw, "\t", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("line %d: expected <collection_id>\\t<tags>", line)
+		}
+		cid, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("line %d: bad collection_id: %w", line, err)
+		}
+		out = append(out, cmapEntry{cid: cid, tags: splitTags(parts[1])})
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return out, nil
 }
 
 func runBatchPerItem(entries []tsvEntry, m mode) {
@@ -290,7 +424,7 @@ func runBatchPerItem(entries []tsvEntry, m mode) {
 			ok++
 		}
 		if tagFlags.progress {
-			fmt.Fprintf(os.Stderr, "\r[%d/%d] tagged", i+1, total)
+			fmt.Fprintf(os.Stderr, "\r[%d/%d] tagged          ", i+1, total)
 		}
 	}
 	if tagFlags.progress {
@@ -453,6 +587,8 @@ func init() {
 	tagCmd.Flags().StringSliceVar(&tagFlags.remove, "remove", nil, "Tags to remove (single-id mode)")
 	tagCmd.Flags().StringSliceVar(&tagFlags.set, "set", nil, "Tags to replace (single-id mode)")
 	tagCmd.Flags().StringVar(&tagFlags.fromFile, "from-file", "", "TSV file: <id>\\t<tags> or <id>\\t<collection_id>\\t<tags>")
+	tagCmd.Flags().StringVar(&tagFlags.fromCollectionMap, "from-collection-map", "", "TSV file: <collection_id>\\t<tags> — append tags to every bookmark in each collection")
+	tagCmd.Flags().BoolVar(&tagFlags.untaggedOnly, "untagged-only", false, "With --from-collection-map, only tag bookmarks whose tags[] is empty")
 	tagCmd.Flags().StringVar(&tagFlags.modeStr, "mode", "", "Batch mode: add | set | remove (with --from-file)")
 	tagCmd.Flags().BoolVar(&tagFlags.noBulk, "no-bulk", false, "Force per-item writes in batch mode (disables the bulk PUT path)")
 	tagCmd.Flags().BoolVar(&tagFlags.progress, "progress", false, "Show [N/total] progress on stderr during batch")

@@ -1,8 +1,11 @@
 package collectionsCmd
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/5uck1ess/raindrop-cli/internal/client"
@@ -148,14 +151,28 @@ var createCmd = &cobra.Command{
 }
 
 var moveFlags struct {
-	id     int
-	parent string
+	id       int
+	parent   string
+	fromFile string
+	progress bool
+	dryRun   bool
 }
 
 var moveCmd = &cobra.Command{
 	Use:   "move",
-	Short: "Reparent a collection (--parent root promotes to top-level)",
+	Short: "Reparent one collection (--id) or many (--from-file TSV)",
+	Long: `Modes:
+
+  --id N --parent M|root                 reparent one collection
+  --from-file plan.tsv                   TSV: <collection_id>\t<new_parent_id> (use 0 for root)
+
+Collections API has no bulk endpoint; --from-file iterates row-by-row at
+the client throttle (~100 req/min).`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if moveFlags.fromFile != "" {
+			runCollectionsMoveFromFile()
+			return
+		}
 		var parentID int
 		if moveFlags.parent == "root" {
 			parentID = 0
@@ -163,6 +180,10 @@ var moveCmd = &cobra.Command{
 			if _, err := fmt.Sscanf(moveFlags.parent, "%d", &parentID); err != nil {
 				u.PrintFatal("invalid --parent (need numeric ID or 'root')", err)
 			}
+		}
+		if moveFlags.dryRun {
+			u.PrintInfo(fmt.Sprintf("[dry-run] move collection %d → parent=%s", moveFlags.id, moveFlags.parent))
+			return
 		}
 		c, err := client.New()
 		if err != nil {
@@ -173,6 +194,80 @@ var moveCmd = &cobra.Command{
 		}
 		u.PrintSuccess(fmt.Sprintf("moved %d → parent=%s", moveFlags.id, moveFlags.parent))
 	},
+}
+
+type collectionMoveRow struct {
+	id, newParent int
+}
+
+func runCollectionsMoveFromFile() {
+	rows, err := parseCollectionMoveTSV(moveFlags.fromFile)
+	if err != nil {
+		u.PrintFatal("parse tsv", err)
+	}
+	if len(rows) == 0 {
+		u.PrintInfo("no entries")
+		return
+	}
+	if moveFlags.dryRun {
+		for _, r := range rows {
+			u.PrintInfo(fmt.Sprintf("[dry-run] collection %d → parent=%d", r.id, r.newParent))
+		}
+		u.PrintInfo(fmt.Sprintf("[dry-run] %d collection(s)", len(rows)))
+		return
+	}
+	c, err := client.New()
+	if err != nil {
+		u.PrintFatal("auth", err)
+	}
+	ok, fail := 0, 0
+	for i, r := range rows {
+		if err := collections.Reparent(c, r.id, r.newParent); err != nil {
+			u.PrintWarn(fmt.Sprintf("id=%d → parent=%d", r.id, r.newParent), err)
+			fail++
+		} else {
+			ok++
+		}
+		if moveFlags.progress {
+			fmt.Fprintf(os.Stderr, "[%d/%d] moved collection %d → %d\n", i+1, len(rows), r.id, r.newParent)
+		}
+	}
+	u.PrintSuccess(fmt.Sprintf("collection move: %d applied, %d failed", ok, fail))
+}
+
+func parseCollectionMoveTSV(path string) ([]collectionMoveRow, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	var out []collectionMoveRow
+	sc := bufio.NewScanner(f)
+	line := 0
+	for sc.Scan() {
+		line++
+		raw := strings.TrimRight(sc.Text(), "\r\n")
+		if strings.TrimSpace(raw) == "" || strings.HasPrefix(strings.TrimSpace(raw), "#") {
+			continue
+		}
+		parts := strings.SplitN(raw, "\t", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("line %d: expected <collection_id>\\t<new_parent_id>", line)
+		}
+		id, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("line %d: bad id: %w", line, err)
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return nil, fmt.Errorf("line %d: bad new_parent_id: %w", line, err)
+		}
+		out = append(out, collectionMoveRow{id: id, newParent: pid})
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return out, nil
 }
 
 var renameFlags struct {
@@ -196,11 +291,12 @@ var renameCmd = &cobra.Command{
 }
 
 var deleteFlags struct {
-	id       int
-	force    bool
-	empty    bool
-	leafOnly bool
-	dryRun   bool
+	id         int
+	force      bool
+	empty      bool
+	leafOnly   bool
+	excludeIDs []int
+	dryRun     bool
 }
 
 var deleteCmd = &cobra.Command{
@@ -223,12 +319,19 @@ var deleteCmd = &cobra.Command{
 					hasChildren[col.ParentID] = true
 				}
 			}
+			excluded := make(map[int]bool, len(deleteFlags.excludeIDs))
+			for _, id := range deleteFlags.excludeIDs {
+				excluded[id] = true
+			}
 			var targets []collections.Collection
 			for _, col := range cols {
 				if col.Count != 0 {
 					continue
 				}
 				if deleteFlags.leafOnly && hasChildren[col.ID] {
+					continue
+				}
+				if excluded[col.ID] {
 					continue
 				}
 				targets = append(targets, col)
@@ -299,8 +402,9 @@ func init() {
 
 	moveCmd.Flags().IntVar(&moveFlags.id, "id", 0, "Collection ID to move")
 	moveCmd.Flags().StringVar(&moveFlags.parent, "parent", "", "Target parent ID, or 'root' to promote")
-	_ = moveCmd.MarkFlagRequired("id")
-	_ = moveCmd.MarkFlagRequired("parent")
+	moveCmd.Flags().StringVar(&moveFlags.fromFile, "from-file", "", "TSV file: <collection_id>\\t<new_parent_id> (0 = root)")
+	moveCmd.Flags().BoolVar(&moveFlags.progress, "progress", false, "Show per-row progress on stderr")
+	moveCmd.Flags().BoolVar(&moveFlags.dryRun, "dry-run", false, "Preview without writing")
 
 	renameCmd.Flags().IntVar(&renameFlags.id, "id", 0, "Collection ID to rename")
 	renameCmd.Flags().StringVar(&renameFlags.to, "to", "", "New title")
@@ -311,5 +415,6 @@ func init() {
 	deleteCmd.Flags().BoolVar(&deleteFlags.force, "force", false, "Delete even if non-empty (items → Trash)")
 	deleteCmd.Flags().BoolVar(&deleteFlags.empty, "empty", false, "Prune all zero-count collections")
 	deleteCmd.Flags().BoolVar(&deleteFlags.leafOnly, "leaf-only", false, "With --empty, only delete collections that also have no child collections")
+	deleteCmd.Flags().IntSliceVar(&deleteFlags.excludeIDs, "exclude-ids", nil, "With --empty, comma-separated collection IDs to keep")
 	deleteCmd.Flags().BoolVar(&deleteFlags.dryRun, "dry-run", false, "Preview without deleting")
 }

@@ -105,9 +105,27 @@ func UpdateMany(c *client.Client, collectionID int, ids []int, fields map[string
 	return c.Do("PUT", path, body, nil)
 }
 
-// DeleteMany deletes raindrops by ids (max 100).
+// DeleteMany deletes raindrops by ids (max 100). For collectionID == -99
+// (Trash), this is a permanent delete per the Raindrop API.
 func DeleteMany(c *client.Client, collectionID int, ids []int) error {
 	body := map[string]any{"ids": ids}
 	path := fmt.Sprintf("/raindrops/%d", collectionID)
 	return c.Do("DELETE", path, body, nil)
+}
+
+// Move reparents a single raindrop to newCollectionID.
+func Move(c *client.Client, id, newCollectionID int) error {
+	body := map[string]any{"collection": map[string]any{"$id": newCollectionID}}
+	path := fmt.Sprintf("/raindrop/%d", id)
+	return c.Do("PUT", path, body, nil)
+}
+
+// MoveMany reparents up to 100 raindrops to newCollectionID via bulk PUT.
+// currentCollectionID scopes the update; use 0 only if you're certain every
+// id is already under the same cid (Raindrop warns cid=0 isn't supported for
+// bulk updates — prefer caller grouping).
+func MoveMany(c *client.Client, currentCollectionID int, ids []int, newCollectionID int) error {
+	return UpdateMany(c, currentCollectionID, ids, map[string]any{
+		"collection": map[string]any{"$id": newCollectionID},
+	})
 }

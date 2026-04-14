@@ -98,9 +98,54 @@ var brokenCmd = &cobra.Command{
 	},
 }
 
+var emptyTrashCmd = &cobra.Command{
+	Use:   "empty-trash",
+	Short: "Permanently delete every raindrop in Trash (-99)",
+	Long: `Trash items are permanently removed — this cannot be undone.
+Use --dry-run first to confirm the count.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		c, err := client.New()
+		if err != nil {
+			u.PrintFatal("auth", err)
+		}
+		all, err := raindrops.ListAll(c, -99, "")
+		if err != nil {
+			u.PrintFatal("list trash", err)
+		}
+		if len(all) == 0 {
+			u.PrintSuccess("trash is already empty")
+			return
+		}
+		ids := make([]int, 0, len(all))
+		for _, r := range all {
+			ids = append(ids, r.ID)
+		}
+		if dryRunFlag {
+			u.PrintInfo(fmt.Sprintf("[dry-run] would permanently delete %d item(s) from trash", len(ids)))
+			return
+		}
+		ok, fail := 0, 0
+		for start := 0; start < len(ids); start += 100 {
+			end := start + 100
+			if end > len(ids) {
+				end = len(ids)
+			}
+			chunk := ids[start:end]
+			if err := raindrops.DeleteMany(c, -99, chunk); err != nil {
+				u.PrintWarn(fmt.Sprintf("chunk %d-%d", start, end), err)
+				fail += len(chunk)
+			} else {
+				ok += len(chunk)
+			}
+		}
+		u.PrintSuccess(fmt.Sprintf("trash purged: %d removed, %d failed", ok, fail))
+	},
+}
+
 func init() {
 	ToolsCmd.PersistentFlags().IntVarP(&collectionFlag, "collection", "c", 0, "Collection ID (0 = all)")
 	ToolsCmd.PersistentFlags().BoolVar(&dryRunFlag, "dry-run", false, "Preview without writing")
 	ToolsCmd.AddCommand(dedupCmd)
 	ToolsCmd.AddCommand(brokenCmd)
+	ToolsCmd.AddCommand(emptyTrashCmd)
 }

@@ -18,6 +18,8 @@ CLI for [Raindrop.io](https://raindrop.io) bookmark management. Thin wrapper ove
 | Bookmarks | `bookmarks list` | List raindrops by collection with optional search query |
 | Bookmarks | `bookmarks untagged` | List all raindrops with empty tags (client-side filter) |
 | Bookmarks | `bookmarks tag` | Add / remove / replace tags on one or many raindrops |
+| Bookmarks | `bookmarks move` | Reparent one, many (TSV), or every bookmark in a collection |
+| Bookmarks | `bookmarks verify` | Check a TSV plan's expected tags are actually present |
 | Collections | `collections list` | Flat, tree (`--tree`), or TSV (`--for-ai`) view of all collections |
 | Collections | `collections create` | Create a collection under root or a parent; prints new ID |
 | Collections | `collections move` | Reparent a collection (`--parent root` to promote) |
@@ -28,6 +30,9 @@ CLI for [Raindrop.io](https://raindrop.io) bookmark management. Thin wrapper ove
 | Tags | `tags delete` | Remove a tag from all raindrops that use it |
 | Tools | `tools dedup` | Find and remove duplicate raindrops by URL |
 | Tools | `tools broken` | Identify raindrops with broken/unreachable links |
+| Tools | `tools empty-trash` | Permanently purge every item in Trash (-99) |
+| Tags | `tags vocab` | Local allowlist of approved tags for automation scripts |
+| Health | `doctor` | Auth + API + rate-limit + Keychain + version check |
 | Global | `--dry-run` | Preview every mutation before it runs |
 | Global | `--for-ai` | Plain-text / markdown-table output for agent consumption |
 | Global | `--debug` | Verbose request/response logging |
@@ -138,10 +143,68 @@ raindrop collections delete --id 12345 --force                # deletes; items �
 raindrop collections delete --empty --dry-run                 # preview prune
 raindrop collections delete --empty                           # prune zero-count (incl. parent buckets!)
 raindrop collections delete --empty --leaf-only               # prune only childless zero-count
+raindrop collections delete --empty --exclude-ids 1,2,3        # keep these from the prune
 raindrop collections create --title "X" --parent 123 --quiet  # prints just the new ID
+
+# Batch collection moves (no bulk API exists — iterates row-by-row):
+raindrop collections move --from-file restructure.tsv --progress
+# TSV format: <collection_id>\t<new_parent_id>   (0 = root)
 ```
 
 > **Deleting a collection moves its items to Trash** (Raindrop API behavior), not Unsorted. Use `raindrop bookmarks list -c -99` to inspect, or restore in the web UI.
+
+### Bookmark moves (reparent between collections)
+
+```bash
+# Single bookmark
+raindrop bookmarks move --id 12345 --to 67890
+
+# Batch — TSV per bookmark, grouped by target and bulk-moved
+raindrop bookmarks move --from-file moves.tsv --progress
+# TSV format: <id>\t<new_collection_id>
+
+# Every bookmark in a collection → another (optional regex filter on title/link/domain)
+raindrop bookmarks move --from-collection 123 --to 456
+raindrop bookmarks move --from-collection 123 --to 456 --filter '^(docker|kubernetes)'
+```
+
+### One-shot tagging by collection
+
+```bash
+# TSV: <collection_id>\t<tags_to_add>
+raindrop bookmarks tag --from-collection-map autotag.tsv --untagged-only --progress
+```
+
+Walks each collection, finds matching bookmarks, bulk-appends the tags. `--untagged-only` scopes to `len(tags)==0` items.
+
+### Verify a tag plan ran correctly
+
+```bash
+raindrop bookmarks verify --from-file plan.tsv
+# Reports pass/fail counts on stdout; mismatch rows as TSV on stderr.
+```
+
+### Health check
+
+```bash
+raindrop doctor
+# token, API auth, rate-limit, Keychain entry (macOS), version vs latest GitHub release
+```
+
+### Purge Trash
+
+```bash
+raindrop tools empty-trash --dry-run   # preview count
+raindrop tools empty-trash             # permanently delete (cannot be undone)
+```
+
+### Local tag vocabulary (for automation)
+
+```bash
+raindrop tags vocab add --tag ai,devops,security
+raindrop tags vocab list
+raindrop tags vocab remove --tag legacy
+```
 
 ### Tags
 

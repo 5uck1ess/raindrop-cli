@@ -6,6 +6,7 @@ import (
 	"time"
 
 	collectionsCmd "github.com/5uck1ess/raindrop-cli/cmd/collections-cmd"
+	doctorCmd "github.com/5uck1ess/raindrop-cli/cmd/doctor-cmd"
 	raindropsCmd "github.com/5uck1ess/raindrop-cli/cmd/raindrops-cmd"
 	tagsCmd "github.com/5uck1ess/raindrop-cli/cmd/tags-cmd"
 	toolsCmd "github.com/5uck1ess/raindrop-cli/cmd/tools-cmd"
@@ -65,4 +66,6 @@ func init() {
 	rootCmd.AddCommand(collectionsCmd.CollectionsCmd)
 	rootCmd.AddCommand(tagsCmd.TagsCmd)
 	rootCmd.AddCommand(toolsCmd.ToolsCmd)
+	doctorCmd.SetVersion(AppVersion)
+	rootCmd.AddCommand(doctorCmd.DoctorCmd)
 }

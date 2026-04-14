@@ -18,9 +18,10 @@ const (
 )
 
 type Client struct {
-	http    *http.Client
-	token   string
-	lastReq time.Time
+	http        *http.Client
+	token       string
+	lastReq     time.Time
+	LastHeaders http.Header
 }
 
 func New() (*Client, error) {
@@ -68,6 +69,7 @@ func (c *Client) Do(method, path string, body, out any) error {
 		return fmt.Errorf("http: %w", err)
 	}
 	defer resp.Body.Close()
+	c.LastHeaders = resp.Header
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
