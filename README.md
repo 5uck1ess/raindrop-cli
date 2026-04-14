@@ -52,12 +52,15 @@ make build-all      # all supported targets (linux/darwin × amd64/arm64)
 
 ### Setup
 
-1. Create a test token at [app.raindrop.io/settings/integrations](https://app.raindrop.io/settings/integrations)
-2. Export it:
+1. Go to [app.raindrop.io/settings/integrations](https://app.raindrop.io/settings/integrations) and click **"Create new app"** under *For Developers*. Name it anything (e.g. `raindrop-cli`).
+2. Click into your new app, scroll down, and hit **"Create test token"**. Copy the token string — it's scoped to your own account only.
+3. Export it:
    ```bash
    export RAINDROP_TOKEN="…"
    ```
-3. The client enforces a 600ms throttle to stay under the 120 req/min API limit.
+4. The client auto-throttles to 600ms between requests to stay under the 120 req/min API limit.
+
+> **Why test tokens, not OAuth?** This is a single-user CLI — you run it on your own machine against your own bookmarks. OAuth is only needed when a hosted service authenticates *other* users' Raindrop accounts. Test tokens are the correct choice here.
 
 ### Bookmarks
 
