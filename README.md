@@ -3,7 +3,7 @@
   <h1>raindrop-cli</h1>
 
   <a href="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml"><img alt="Build Workflow" src="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml/badge.svg"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/5uck1ess/raindrop-cli?color=green&v=2"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/5uck1ess/raindrop-cli?v=2"></a><br><br>
-  <a href="#capabilities">Capabilities</a> &bull; <a href="#installation">Installation</a> &bull; <a href="#usage">Usage</a> &bull; <a href="#tips-and-notes">Tips & Notes</a> &bull; <a href="#release">Release</a> &bull; <a href="#license">License</a>
+  <a href="#capabilities">Capabilities</a> &bull; <a href="#installation">Installation</a> &bull; <a href="#usage">Usage</a> &bull; <a href="#tips-and-notes">Tips & Notes</a> &bull; <a href="#release">Release</a> &bull; <a href="#credits">Credits</a> &bull; <a href="#license">License</a>
 </div>
 
 ---
@@ -16,6 +16,13 @@ CLI for [Raindrop.io](https://raindrop.io) bookmark management. Thin wrapper ove
 |---------|----------|-------------|
 | Auth | `RAINDROP_TOKEN` env | Bearer token auth via test-token or OAuth |
 | Bookmarks | `bookmarks list` | List raindrops by collection with optional search query |
+| Bookmarks | `bookmarks untagged` | List all raindrops with empty tags (client-side filter) |
+| Bookmarks | `bookmarks tag` | Add / remove / replace tags on one or many raindrops |
+| Collections | `collections list` | Flat, tree (`--tree`), or TSV (`--for-ai`) view of all collections |
+| Collections | `collections create` | Create a collection under root or a parent; prints new ID |
+| Collections | `collections move` | Reparent a collection (`--parent root` to promote) |
+| Collections | `collections rename` | Change a collection's title |
+| Collections | `collections delete` | Delete one (`--id`) or all empty (`--empty`); items go to Trash |
 | Tags | `tags list` | List tags in a collection with usage counts |
 | Tags | `tags merge`, `tags rename` | Combine or rename tags across a collection (bulk) |
 | Tags | `tags delete` | Remove a tag from all raindrops that use it |
@@ -77,10 +84,47 @@ make build-all      # all targets (linux/darwin/windows × amd64/arm64)
 raindrop bookmarks list                           # all raindrops
 raindrop bookmarks list -c 12345                  # scoped to a collection
 raindrop bookmarks list -s "devops kubernetes"    # Raindrop search syntax
-raindrop bookmarks list -c 12345 -s "#untagged" --for-ai
+
+raindrop bookmarks untagged                       # items with empty tags[]
+raindrop bookmarks untagged --for-ai              # TSV: id, domain, title, link
 ```
 
 Collection IDs: `0` = all, `-1` = unsorted, `-99` = trash.
+
+Tag a single bookmark or a batch from a TSV file:
+
+```bash
+raindrop bookmarks tag --id 12345 --add ai,tools           # append
+raindrop bookmarks tag --id 12345 --remove legacy          # remove
+raindrop bookmarks tag --id 12345 --set ai,tools           # replace
+
+# Batch from TSV. Format: <id>\t<tag1,tag2,...> per line (# comments ignored).
+raindrop bookmarks tag --from-file plan.tsv --add --dry-run
+raindrop bookmarks tag --from-file plan.tsv --add
+raindrop bookmarks tag --from-file plan.tsv --set
+```
+
+> Each bookmark is updated via `PUT /raindrop/{id}` so tag-sets can differ per id. Expect ~100 items/minute on `--set`, ~50 on `--add`/`--remove` (latter need a fetch-then-write).
+
+### Collections
+
+```bash
+raindrop collections list                         # flat table
+raindrop collections list --tree                  # indented tree
+raindrop collections list --for-ai                # TSV: id, parent_id, count, title
+
+raindrop collections create --title "🧪 Lab"                  # at root
+raindrop collections create --title "sub" --parent 12345      # nested
+raindrop collections rename --id 12345 --to "New Title"
+raindrop collections move   --id 12345 --parent 67890         # reparent
+raindrop collections move   --id 12345 --parent root          # promote to root
+raindrop collections delete --id 12345                        # errors if non-empty
+raindrop collections delete --id 12345 --force                # deletes; items → Trash
+raindrop collections delete --empty --dry-run                 # preview prune
+raindrop collections delete --empty                           # prune zero-count
+```
+
+> **Deleting a collection moves its items to Trash** (Raindrop API behavior), not Unsorted. Use `raindrop bookmarks list -c -99` to inspect, or restore in the web UI.
 
 ### Tags
 
@@ -132,6 +176,10 @@ Releases are cut automatically on every push to `main`. Version bumping follows 
 | _(nothing)_ | `vx.y.Z` | Patch (default) |
 
 GitHub Actions builds a matrix of binaries for `linux/darwin/windows × amd64/arm64`, uploads them as release assets, and publishes the GitHub Release.
+
+## Credits
+
+Design patterns, repo layout, and CLI ergonomics borrow heavily from [tanq16](https://github.com/tanq16)'s Go CLI projects — in particular the flag/output conventions (`--for-ai`, `--dry-run`, markdown-table output for agents) and the thin service/client/cmd separation. Thanks for the template.
 
 ## License
 
