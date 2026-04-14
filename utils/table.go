@@ -16,7 +16,7 @@ var (
 
 func PrintTable(headers []string, rows [][]string) {
 	if GlobalForAIFlag {
-		printMarkdownTable(headers, rows)
+		printTSV(headers, rows)
 		return
 	}
 
@@ -35,25 +35,30 @@ func PrintTable(headers []string, rows [][]string) {
 	PrintGeneric(t.Render())
 }
 
-func printMarkdownTable(headers []string, rows [][]string) {
+func printTSV(headers []string, rows [][]string) {
 	if len(headers) == 0 {
 		return
 	}
-	fmt.Println("| " + strings.Join(escape(headers), " | ") + " |")
-	seps := make([]string, len(headers))
-	for i := range seps {
-		seps[i] = "---"
-	}
-	fmt.Println("| " + strings.Join(seps, " | ") + " |")
+	fmt.Println(strings.Join(lower(headers), "\t"))
 	for _, row := range rows {
-		fmt.Println("| " + strings.Join(escape(row), " | ") + " |")
+		fmt.Println(strings.Join(sanitizeTab(row), "\t"))
 	}
 }
 
-func escape(cells []string) []string {
+func lower(cells []string) []string {
 	out := make([]string, len(cells))
 	for i, c := range cells {
-		out[i] = strings.ReplaceAll(c, "|", "\\|")
+		out[i] = strings.ToLower(c)
+	}
+	return out
+}
+
+func sanitizeTab(cells []string) []string {
+	out := make([]string, len(cells))
+	for i, c := range cells {
+		c = strings.ReplaceAll(c, "\t", " ")
+		c = strings.ReplaceAll(c, "\n", " ")
+		out[i] = c
 	}
 	return out
 }

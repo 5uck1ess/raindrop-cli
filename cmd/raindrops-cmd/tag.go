@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -21,12 +22,17 @@ const (
 	modeSet
 )
 
+const bulkChunkSize = 100
+
 var tagFlags struct {
 	id       int
 	add      []string
 	remove   []string
 	set      []string
 	fromFile string
+	modeStr  string
+	noBulk   bool
+	progress bool
 	dryRun   bool
 }
 
@@ -35,17 +41,28 @@ var tagCmd = &cobra.Command{
 	Short: "Add, remove, or replace tags on bookmarks",
 	Long: `Update tags on one bookmark (--id) or many (--from-file TSV).
 
-TSV format: <id>\t<tag1,tag2,tag3> (one per line, # comments ignored).
-With --from-file, pair exactly one of --add or --set (not --remove).`,
-	Run: func(cmd *cobra.Command, args []string) {
-		m, tags, err := chosenMode()
-		if err != nil {
-			u.PrintFatal("mode", err)
-		}
+TSV formats accepted (# comments ignored):
+  <id>\t<tag1,tag2,...>
+  <id>\t<collection_id>\t<tag1,tag2,...>
 
+Single-id mode: pass one of --add / --remove / --set with comma-separated tags.
+Batch mode (--from-file): pass --mode add|set|remove. add/set use the bulk
+PUT /raindrops/{cid} endpoint (up to 100 ids per call, grouped by collection
+and tag-set) — pass --no-bulk to force per-item writes. --mode remove always
+takes the per-item path because the bulk endpoint cannot remove specific tags.`,
+	Run: func(cmd *cobra.Command, args []string) {
 		if tagFlags.fromFile != "" {
+			m, err := batchMode()
+			if err != nil {
+				u.PrintFatal("mode", err)
+			}
 			runBatch(m)
 			return
+		}
+
+		m, tags, err := singleMode()
+		if err != nil {
+			u.PrintFatal("mode", err)
 		}
 		if tagFlags.id == 0 {
 			u.PrintFatal("need --id or --from-file", nil)
@@ -54,7 +71,7 @@ With --from-file, pair exactly one of --add or --set (not --remove).`,
 	},
 }
 
-func chosenMode() (mode, []string, error) {
+func singleMode() (mode, []string, error) {
 	set := 0
 	var m mode
 	var tags []string
@@ -79,6 +96,21 @@ func chosenMode() (mode, []string, error) {
 	return m, tags, nil
 }
 
+func batchMode() (mode, error) {
+	switch strings.ToLower(tagFlags.modeStr) {
+	case "add":
+		return modeAdd, nil
+	case "set":
+		return modeSet, nil
+	case "remove":
+		return modeRemove, nil
+	case "":
+		return 0, fmt.Errorf("--from-file requires --mode add|set|remove")
+	default:
+		return 0, fmt.Errorf("unknown --mode %q (use add|set|remove)", tagFlags.modeStr)
+	}
+}
+
 func runSingle(id int, m mode, tags []string) {
 	if tagFlags.dryRun {
 		u.PrintInfo(fmt.Sprintf("[dry-run] id=%d %s %v", id, modeLabel(m), tags))
@@ -95,9 +127,6 @@ func runSingle(id int, m mode, tags []string) {
 }
 
 func runBatch(m mode) {
-	if m == modeRemove {
-		u.PrintFatal("--from-file does not support --remove (use --id per item)", nil)
-	}
 	entries, err := parseTSV(tagFlags.fromFile)
 	if err != nil {
 		u.PrintFatal("parse tsv", err)
@@ -106,11 +135,145 @@ func runBatch(m mode) {
 		u.PrintInfo("no entries")
 		return
 	}
+
+	// Remove must stay per-item — bulk cannot remove specific tags.
+	if m == modeRemove || tagFlags.noBulk {
+		runBatchPerItem(entries, m)
+		return
+	}
+
+	c, err := client.New()
+	if err != nil {
+		u.PrintFatal("auth", err)
+	}
+
+	// Preflight: resolve any entries missing collection_id by paginating
+	// /raindrops/0 once and building an id→cid map.
+	missing := 0
+	for _, e := range entries {
+		if e.collectionID == 0 {
+			missing++
+		}
+	}
+	if missing > 0 {
+		u.PrintInfo(fmt.Sprintf("preflight: resolving collection_id for %d entries…", missing))
+		all, err := raindrops.ListAll(c, 0, "")
+		if err != nil {
+			u.PrintFatal("preflight list", err)
+		}
+		cidByID := make(map[int]int, len(all))
+		for _, r := range all {
+			cidByID[r.ID] = r.CollectionID()
+		}
+		for i := range entries {
+			if entries[i].collectionID == 0 {
+				entries[i].collectionID = cidByID[entries[i].id]
+			}
+		}
+	}
+
+	// Bucket by (cid, tag-set). Raindrop's bulk PUT applies the same tags
+	// to every id in the call, so each bucket = one tag-set for one cid.
+	type bucketKey struct {
+		cid  int
+		tags string
+	}
+	type bucket struct {
+		cid  int
+		tags []string
+		ids  []int
+	}
+	buckets := map[bucketKey]*bucket{}
+	var skipped int
+	for _, e := range entries {
+		if e.collectionID == 0 {
+			skipped++
+			continue
+		}
+		key := bucketKey{cid: e.collectionID, tags: joinSorted(e.tags)}
+		b, ok := buckets[key]
+		if !ok {
+			b = &bucket{cid: e.collectionID, tags: dedupTags(e.tags)}
+			buckets[key] = b
+		}
+		b.ids = append(b.ids, e.id)
+	}
+	if skipped > 0 {
+		u.PrintWarn(fmt.Sprintf("skipping %d entry(ies) with unresolved collection_id", skipped), nil)
+	}
+
+	total := 0
+	for _, b := range buckets {
+		total += len(b.ids)
+	}
+
+	if tagFlags.dryRun {
+		for _, b := range buckets {
+			for chunkStart := 0; chunkStart < len(b.ids); chunkStart += bulkChunkSize {
+				end := chunkStart + bulkChunkSize
+				if end > len(b.ids) {
+					end = len(b.ids)
+				}
+				u.PrintInfo(fmt.Sprintf("[dry-run] %s cid=%d tags=%v ids=%d", modeLabel(m), b.cid, b.tags, end-chunkStart))
+			}
+		}
+		u.PrintInfo(fmt.Sprintf("[dry-run] %d entries across %d bucket(s)", total, len(buckets)))
+		return
+	}
+
+	done := 0
+	ok := 0
+	fail := 0
+	for _, b := range buckets {
+		for chunkStart := 0; chunkStart < len(b.ids); chunkStart += bulkChunkSize {
+			end := chunkStart + bulkChunkSize
+			if end > len(b.ids) {
+				end = len(b.ids)
+			}
+			chunk := b.ids[chunkStart:end]
+			if err := applyBulk(c, b.cid, chunk, b.tags, m); err != nil {
+				u.PrintWarn(fmt.Sprintf("cid=%d chunk %d-%d", b.cid, chunkStart, end), err)
+				fail += len(chunk)
+			} else {
+				ok += len(chunk)
+			}
+			done += len(chunk)
+			if tagFlags.progress {
+				fmt.Fprintf(os.Stderr, "\r[%d/%d] tagged", done, total)
+			}
+		}
+	}
+	if tagFlags.progress {
+		fmt.Fprintln(os.Stderr)
+	}
+	u.PrintSuccess(fmt.Sprintf("bulk %s: %d applied, %d failed, %d bucket(s)", modeLabel(m), ok, fail, len(buckets)))
+}
+
+// applyBulk issues 1 or 2 PUT /raindrops/{cid} calls covering the chunk.
+// add  → append tags
+// set  → clear ([]), then append new tags
+func applyBulk(c *client.Client, cid int, ids []int, tags []string, m mode) error {
+	switch m {
+	case modeAdd:
+		return raindrops.UpdateMany(c, cid, ids, map[string]any{"tags": tags})
+	case modeSet:
+		if err := raindrops.UpdateMany(c, cid, ids, map[string]any{"tags": []string{}}); err != nil {
+			return fmt.Errorf("clear: %w", err)
+		}
+		if len(tags) == 0 {
+			return nil
+		}
+		return raindrops.UpdateMany(c, cid, ids, map[string]any{"tags": tags})
+	}
+	return fmt.Errorf("bulk does not support mode %s", modeLabel(m))
+}
+
+func runBatchPerItem(entries []tsvEntry, m mode) {
 	if tagFlags.dryRun {
 		for _, e := range entries {
 			u.PrintInfo(fmt.Sprintf("[dry-run] id=%d %s %v", e.id, modeLabel(m), e.tags))
 		}
-		u.PrintInfo(fmt.Sprintf("[dry-run] %d entries", len(entries)))
+		u.PrintInfo(fmt.Sprintf("[dry-run] %d entries (per-item)", len(entries)))
 		return
 	}
 	c, err := client.New()
@@ -118,15 +281,22 @@ func runBatch(m mode) {
 		u.PrintFatal("auth", err)
 	}
 	var ok, fail int
-	for _, e := range entries {
+	total := len(entries)
+	for i, e := range entries {
 		if err := applyOne(c, e.id, m, e.tags); err != nil {
 			u.PrintWarn(fmt.Sprintf("id=%d", e.id), err)
 			fail++
-			continue
+		} else {
+			ok++
 		}
-		ok++
+		if tagFlags.progress {
+			fmt.Fprintf(os.Stderr, "\r[%d/%d] tagged", i+1, total)
+		}
 	}
-	u.PrintSuccess(fmt.Sprintf("applied %d, failed %d", ok, fail))
+	if tagFlags.progress {
+		fmt.Fprintln(os.Stderr)
+	}
+	u.PrintSuccess(fmt.Sprintf("per-item %s: %d applied, %d failed", modeLabel(m), ok, fail))
 }
 
 // applyOne routes a single-id update. For --add and --remove we read-modify-write
@@ -184,9 +354,28 @@ func diffTags(existing, remove []string) []string {
 	return out
 }
 
+func dedupTags(tags []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func joinSorted(tags []string) string {
+	cp := append([]string(nil), tags...)
+	sort.Strings(cp)
+	return strings.Join(cp, ",")
+}
+
 type tsvEntry struct {
-	id   int
-	tags []string
+	id           int
+	collectionID int // 0 if absent in the TSV — preflight will fill in
+	tags         []string
 }
 
 func parseTSV(path string) ([]tsvEntry, error) {
@@ -201,20 +390,31 @@ func parseTSV(path string) ([]tsvEntry, error) {
 	line := 0
 	for sc.Scan() {
 		line++
-		raw := strings.TrimSpace(sc.Text())
-		if raw == "" || strings.HasPrefix(raw, "#") {
+		raw := strings.TrimRight(sc.Text(), "\r\n")
+		if strings.TrimSpace(raw) == "" || strings.HasPrefix(strings.TrimSpace(raw), "#") {
 			continue
 		}
-		parts := strings.SplitN(raw, "\t", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("line %d: expected <id>\\t<tags>", line)
+		parts := strings.Split(raw, "\t")
+		switch len(parts) {
+		case 2:
+			id, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("line %d: bad id: %w", line, err)
+			}
+			out = append(out, tsvEntry{id: id, tags: splitTags(parts[1])})
+		case 3:
+			id, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("line %d: bad id: %w", line, err)
+			}
+			cid, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("line %d: bad collection_id: %w", line, err)
+			}
+			out = append(out, tsvEntry{id: id, collectionID: cid, tags: splitTags(parts[2])})
+		default:
+			return nil, fmt.Errorf("line %d: expected 2 or 3 tab-separated columns", line)
 		}
-		id, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-		if err != nil {
-			return nil, fmt.Errorf("line %d: bad id: %w", line, err)
-		}
-		tags := splitTags(parts[1])
-		out = append(out, tsvEntry{id: id, tags: tags})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -249,9 +449,12 @@ func modeLabel(m mode) string {
 func init() {
 	RaindropsCmd.AddCommand(tagCmd)
 	tagCmd.Flags().IntVar(&tagFlags.id, "id", 0, "Bookmark ID (single-item mode)")
-	tagCmd.Flags().StringSliceVar(&tagFlags.add, "add", nil, "Tags to append (comma-separated)")
-	tagCmd.Flags().StringSliceVar(&tagFlags.remove, "remove", nil, "Tags to remove (comma-separated)")
-	tagCmd.Flags().StringSliceVar(&tagFlags.set, "set", nil, "Tags to replace (comma-separated)")
-	tagCmd.Flags().StringVar(&tagFlags.fromFile, "from-file", "", "TSV file: <id>\\t<tag1,tag2,...>")
+	tagCmd.Flags().StringSliceVar(&tagFlags.add, "add", nil, "Tags to append (single-id mode)")
+	tagCmd.Flags().StringSliceVar(&tagFlags.remove, "remove", nil, "Tags to remove (single-id mode)")
+	tagCmd.Flags().StringSliceVar(&tagFlags.set, "set", nil, "Tags to replace (single-id mode)")
+	tagCmd.Flags().StringVar(&tagFlags.fromFile, "from-file", "", "TSV file: <id>\\t<tags> or <id>\\t<collection_id>\\t<tags>")
+	tagCmd.Flags().StringVar(&tagFlags.modeStr, "mode", "", "Batch mode: add | set | remove (with --from-file)")
+	tagCmd.Flags().BoolVar(&tagFlags.noBulk, "no-bulk", false, "Force per-item writes in batch mode (disables the bulk PUT path)")
+	tagCmd.Flags().BoolVar(&tagFlags.progress, "progress", false, "Show [N/total] progress on stderr during batch")
 	tagCmd.Flags().BoolVar(&tagFlags.dryRun, "dry-run", false, "Preview without writing")
 }

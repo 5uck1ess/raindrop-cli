@@ -123,6 +123,7 @@ var createFlags struct {
 	title  string
 	parent int
 	color  string
+	quiet  bool
 }
 
 var createCmd = &cobra.Command{
@@ -137,7 +138,7 @@ var createCmd = &cobra.Command{
 		if err != nil {
 			u.PrintFatal("create collection", err)
 		}
-		if u.GlobalForAIFlag {
+		if u.GlobalForAIFlag || createFlags.quiet {
 			fmt.Println(col.ID)
 			return
 		}
@@ -195,10 +196,11 @@ var renameCmd = &cobra.Command{
 }
 
 var deleteFlags struct {
-	id     int
-	force  bool
-	empty  bool
-	dryRun bool
+	id       int
+	force    bool
+	empty    bool
+	leafOnly bool
+	dryRun   bool
 }
 
 var deleteCmd = &cobra.Command{
@@ -215,11 +217,21 @@ var deleteCmd = &cobra.Command{
 			if err != nil {
 				u.PrintFatal("list collections", err)
 			}
+			hasChildren := make(map[int]bool, len(cols))
+			for _, col := range cols {
+				if col.ParentID != 0 {
+					hasChildren[col.ParentID] = true
+				}
+			}
 			var targets []collections.Collection
 			for _, col := range cols {
-				if col.Count == 0 {
-					targets = append(targets, col)
+				if col.Count != 0 {
+					continue
 				}
+				if deleteFlags.leafOnly && hasChildren[col.ID] {
+					continue
+				}
+				targets = append(targets, col)
 			}
 			if deleteFlags.dryRun {
 				for _, col := range targets {
@@ -282,6 +294,7 @@ func init() {
 	createCmd.Flags().StringVar(&createFlags.title, "title", "", "Collection title")
 	createCmd.Flags().IntVar(&createFlags.parent, "parent", 0, "Parent collection ID (0=root)")
 	createCmd.Flags().StringVar(&createFlags.color, "color", "", "Hex color, e.g. #ff0000")
+	createCmd.Flags().BoolVar(&createFlags.quiet, "quiet", false, "Print only the new collection ID (for shell scripts)")
 	_ = createCmd.MarkFlagRequired("title")
 
 	moveCmd.Flags().IntVar(&moveFlags.id, "id", 0, "Collection ID to move")
@@ -297,5 +310,6 @@ func init() {
 	deleteCmd.Flags().IntVar(&deleteFlags.id, "id", 0, "Collection ID to delete")
 	deleteCmd.Flags().BoolVar(&deleteFlags.force, "force", false, "Delete even if non-empty (items → Trash)")
 	deleteCmd.Flags().BoolVar(&deleteFlags.empty, "empty", false, "Prune all zero-count collections")
+	deleteCmd.Flags().BoolVar(&deleteFlags.leafOnly, "leaf-only", false, "With --empty, only delete collections that also have no child collections")
 	deleteCmd.Flags().BoolVar(&deleteFlags.dryRun, "dry-run", false, "Preview without deleting")
 }

@@ -98,17 +98,27 @@ Collection IDs: `0` = all, `-1` = unsorted, `-99` = trash.
 Tag a single bookmark or a batch from a TSV file:
 
 ```bash
+# Single-id mode
 raindrop bookmarks tag --id 12345 --add ai,tools           # append
 raindrop bookmarks tag --id 12345 --remove legacy          # remove
 raindrop bookmarks tag --id 12345 --set ai,tools           # replace
 
-# Batch from TSV. Format: <id>\t<tag1,tag2,...> per line (# comments ignored).
-raindrop bookmarks tag --from-file plan.tsv --add --dry-run
-raindrop bookmarks tag --from-file plan.tsv --add
-raindrop bookmarks tag --from-file plan.tsv --set
+# Batch mode — pick a --mode, feed a TSV:
+raindrop bookmarks tag --from-file plan.tsv --mode add --progress
+raindrop bookmarks tag --from-file plan.tsv --mode set
+raindrop bookmarks tag --from-file plan.tsv --mode remove
 ```
 
-> Each bookmark is updated via `PUT /raindrop/{id}` so tag-sets can differ per id. Expect ~100 items/minute on `--set`, ~50 on `--add`/`--remove` (latter need a fetch-then-write).
+TSV formats (`#` comments ignored):
+
+```
+<id>\t<tag1,tag2,...>                    # preflights to resolve collection_id
+<id>\t<collection_id>\t<tag1,tag2,...>   # direct bulk, no preflight
+```
+
+Pipe the output of `bookmarks untagged --for-ai` (which already includes `collection_id`) into your plan file and you get the 3-column form for free.
+
+> **Performance**: `--mode add` and `--mode set` use Raindrop's bulk `PUT /raindrops/{cid}` endpoint — up to 100 ids per call, grouped by `(collection_id, tag_set)`. ~1000 items tag in seconds instead of minutes. `--mode remove` always uses per-item writes (bulk cannot remove specific tags). Pass `--no-bulk` to force per-item on any mode.
 
 ### Collections
 
@@ -126,7 +136,9 @@ raindrop collections move   --id 12345 --parent root          # promote to root
 raindrop collections delete --id 12345                        # errors if non-empty
 raindrop collections delete --id 12345 --force                # deletes; items → Trash
 raindrop collections delete --empty --dry-run                 # preview prune
-raindrop collections delete --empty                           # prune zero-count
+raindrop collections delete --empty                           # prune zero-count (incl. parent buckets!)
+raindrop collections delete --empty --leaf-only               # prune only childless zero-count
+raindrop collections create --title "X" --parent 123 --quiet  # prints just the new ID
 ```
 
 > **Deleting a collection moves its items to Trash** (Raindrop API behavior), not Unsorted. Use `raindrop bookmarks list -c -99` to inspect, or restore in the web UI.
@@ -164,7 +176,7 @@ raindrop tags list --for-ai | head -20
 ## Tips and Notes
 
 - All mutating commands accept `--dry-run` to preview changes before committing — use it on `merge`, `rename`, `delete`, `dedup`.
-- `--for-ai` produces plain text / markdown tables — ideal for piping into tools or feeding directly to an agent. Summary / info lines go to stderr in this mode, so `wc -l`, `jq`, `awk` on stdout see only payload rows.
+- `--for-ai` produces pure TSV — header row plus tab-separated data rows. Summary / info lines go to stderr so `wc -l`, `jq`, `awk` on stdout see only payload rows. ~30% fewer tokens than markdown for the same data.
 - `--debug` prints structured request/response logs including rate-limit headers (`X-RateLimit-Remaining`, `X-RateLimit-Reset`).
 - The client self-throttles to 600ms between calls (120 req/min). Long-running bulk jobs are safe.
 - Bulk endpoints handle up to 100 items per call; the CLI paginates automatically.
