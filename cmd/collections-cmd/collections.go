@@ -158,9 +158,10 @@ var renameCmd = &cobra.Command{
 }
 
 var deleteFlags struct {
-	id    int
-	force bool
-	empty bool
+	id     int
+	force  bool
+	empty  bool
+	dryRun bool
 }
 
 var deleteCmd = &cobra.Command{
@@ -177,11 +178,21 @@ var deleteCmd = &cobra.Command{
 			if err != nil {
 				u.PrintFatal("list collections", err)
 			}
-			var removed int
+			var targets []collections.Collection
 			for _, col := range cols {
-				if col.Count != 0 {
-					continue
+				if col.Count == 0 {
+					targets = append(targets, col)
 				}
+			}
+			if deleteFlags.dryRun {
+				for _, col := range targets {
+					u.PrintInfo(fmt.Sprintf("[dry-run] would delete %d (%q)", col.ID, col.Title))
+				}
+				u.PrintInfo(fmt.Sprintf("[dry-run] %d empty collection(s) would be pruned", len(targets)))
+				return
+			}
+			var removed int
+			for _, col := range targets {
 				if err := collections.Delete(c, col.ID); err != nil {
 					u.PrintWarn(fmt.Sprintf("delete %d (%q)", col.ID, col.Title), err)
 					continue
@@ -197,16 +208,27 @@ var deleteCmd = &cobra.Command{
 			u.PrintFatal("need --id or --empty", nil)
 		}
 
-		if !deleteFlags.force {
-			cols, err := collections.ListAll(c)
-			if err != nil {
-				u.PrintFatal("list collections", err)
+		cols, err := collections.ListAll(c)
+		if err != nil {
+			u.PrintFatal("list collections", err)
+		}
+		var target *collections.Collection
+		for i := range cols {
+			if cols[i].ID == deleteFlags.id {
+				target = &cols[i]
+				break
 			}
-			for _, col := range cols {
-				if col.ID == deleteFlags.id && col.Count > 0 {
-					u.PrintFatal(fmt.Sprintf("collection %d has %d item(s); pass --force to delete (items go to Trash)", col.ID, col.Count), nil)
-				}
-			}
+		}
+		if target == nil {
+			u.PrintFatal(fmt.Sprintf("collection %d not found", deleteFlags.id), nil)
+		}
+		if target.Count > 0 && !deleteFlags.force {
+			u.PrintFatal(fmt.Sprintf("collection %d has %d item(s); pass --force to delete (items go to Trash)", target.ID, target.Count), nil)
+		}
+
+		if deleteFlags.dryRun {
+			u.PrintInfo(fmt.Sprintf("[dry-run] would delete %d (%q, count=%d)", target.ID, target.Title, target.Count))
+			return
 		}
 		if err := collections.Delete(c, deleteFlags.id); err != nil {
 			u.PrintFatal("delete collection", err)
@@ -238,4 +260,5 @@ func init() {
 	deleteCmd.Flags().IntVar(&deleteFlags.id, "id", 0, "Collection ID to delete")
 	deleteCmd.Flags().BoolVar(&deleteFlags.force, "force", false, "Delete even if non-empty (items → Trash)")
 	deleteCmd.Flags().BoolVar(&deleteFlags.empty, "empty", false, "Prune all zero-count collections")
+	deleteCmd.Flags().BoolVar(&deleteFlags.dryRun, "dry-run", false, "Preview without deleting")
 }
