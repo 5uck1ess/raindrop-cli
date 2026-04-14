@@ -10,8 +10,6 @@
 
 CLI for [Raindrop.io](https://raindrop.io) bookmark management. Thin wrapper over the [REST API](https://developer.raindrop.io/) — built for bulk cleanup, tag refactoring, and deduplication from the terminal or an AI agent.
 
-Modeled after [Tanq16/gcli](https://github.com/Tanq16/gcli): single static Go binary, auto-released via tag-on-commit, `--for-ai` mode for token-efficient output.
-
 ## Capabilities
 
 | Service | Commands | Description |
