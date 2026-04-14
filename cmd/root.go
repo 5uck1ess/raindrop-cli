@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	collectionsCmd "github.com/5uck1ess/raindrop-cli/cmd/collections-cmd"
 	raindropsCmd "github.com/5uck1ess/raindrop-cli/cmd/raindrops-cmd"
 	tagsCmd "github.com/5uck1ess/raindrop-cli/cmd/tags-cmd"
 	toolsCmd "github.com/5uck1ess/raindrop-cli/cmd/tools-cmd"
@@ -61,6 +62,7 @@ func init() {
 	cobra.OnInitialize(setupLogs)
 
 	rootCmd.AddCommand(raindropsCmd.RaindropsCmd)
+	rootCmd.AddCommand(collectionsCmd.CollectionsCmd)
 	rootCmd.AddCommand(tagsCmd.TagsCmd)
 	rootCmd.AddCommand(toolsCmd.ToolsCmd)
 }

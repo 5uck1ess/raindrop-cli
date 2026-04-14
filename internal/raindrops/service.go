@@ -22,6 +22,48 @@ type listResponse struct {
 	Count  int        `json:"count"`
 }
 
+type itemResponse struct {
+	Result bool     `json:"result"`
+	Item   Raindrop `json:"item"`
+}
+
+// Get fetches a single raindrop by id.
+func Get(c *client.Client, id int) (Raindrop, error) {
+	var resp itemResponse
+	path := fmt.Sprintf("/raindrop/%d", id)
+	if err := c.Do("GET", path, nil, &resp); err != nil {
+		return Raindrop{}, err
+	}
+	return resp.Item, nil
+}
+
+// SetTags replaces the tags on a single raindrop.
+func SetTags(c *client.Client, id int, tags []string) error {
+	if tags == nil {
+		tags = []string{}
+	}
+	body := map[string]any{"tags": tags}
+	path := fmt.Sprintf("/raindrop/%d", id)
+	return c.Do("PUT", path, body, nil)
+}
+
+// ListAll pages through /raindrops/0 and returns every raindrop.
+func ListAll(c *client.Client, search string) ([]Raindrop, error) {
+	const perPage = 50
+	var all []Raindrop
+	for page := 0; ; page++ {
+		items, total, err := List(c, 0, search, page, perPage)
+		if err != nil {
+			return nil, fmt.Errorf("page %d: %w", page, err)
+		}
+		all = append(all, items...)
+		if len(all) >= total || len(items) == 0 {
+			break
+		}
+	}
+	return all, nil
+}
+
 // List fetches raindrops in a collection. collectionID 0 = all, -1 = unsorted,
 // -99 = trash. search is an optional Raindrop search query.
 func List(c *client.Client, collectionID int, search string, page, perPage int) ([]Raindrop, int, error) {
