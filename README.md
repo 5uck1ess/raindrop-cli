@@ -76,7 +76,7 @@ make build-all      # all targets (linux/darwin/windows × amd64/arm64)
    ```
 4. The client auto-throttles to 600ms between requests to stay under the 120 req/min API limit.
 
-> **Why test tokens, not OAuth?** This is a single-user CLI — you run it on your own machine against your own bookmarks. OAuth is only needed when a hosted service authenticates *other* users' Raindrop accounts. Test tokens are the correct choice here.
+> **Why test tokens, not OAuth?** For a single-user CLI that accesses only the developer's own Raindrop.io account, a personal (test) token is the simplest and most appropriate authentication method. OAuth is necessary when the application needs to authenticate multiple users or is deployed as a hosted or distributed service.
 
 ### Bookmarks
 
