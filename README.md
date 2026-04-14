@@ -2,7 +2,7 @@
   <img src=".github/assets/logo.svg" alt="raindrop-cli Logo" width="200">
   <h1>raindrop-cli</h1>
 
-  <a href="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml"><img alt="Build Workflow" src="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml/badge.svg"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/5uck1ess/raindrop-cli"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/5uck1ess/raindrop-cli"></a><br><br>
+  <a href="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml"><img alt="Build Workflow" src="https://github.com/5uck1ess/raindrop-cli/actions/workflows/release.yaml/badge.svg"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/5uck1ess/raindrop-cli?color=green&v=2"></a>&nbsp;<a href="https://github.com/5uck1ess/raindrop-cli/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/5uck1ess/raindrop-cli?v=2"></a><br><br>
   <a href="#capabilities">Capabilities</a> &bull; <a href="#installation">Installation</a> &bull; <a href="#usage">Usage</a> &bull; <a href="#tips-and-notes">Tips & Notes</a> &bull; <a href="#release">Release</a> &bull; <a href="#license">License</a>
 </div>
 
